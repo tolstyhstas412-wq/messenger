@@ -2,7 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const Database = require('better-sqlite3');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs'); // Заменено на bcryptjs
 
 const app = express();
 const server = http.createServer(app);
@@ -154,4 +154,6 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(3000, () => console.log('Сервер: http://localhost:3000'));
+// ИСПРАВЛЕНО ДЛЯ RENDER
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log('Сервер работает на порту ' + PORT));
