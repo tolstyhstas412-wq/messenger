@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Мой мессенджер</title>
+  <style>
+    body { font-family: Arial; margin: 0; padding: 20px; background: #f0f0f0; }
+    #layout { display: flex; max-width: 1000px; margin: 0 auto; gap: 20px; }
+    #sidebar { width: 240px; background: white; border-radius: 12px; padding: 15px; height: fit-content; }
+    #sidebar h3 { margin: 12px 0 8px; font-size: 15px; }
+    ul.list { list-style: none; padding: 0; margin: 0; }
+    ul.list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; font-size: 14px; }
+    ul.list li:hover { background: #e8f4ff; }
+    ul.list li.active { background: #0088cc; color: white; }
+    #main { flex: 1; }
+    #messages { list-style: none; padding: 0; margin: 0 0 20px; }
+    #messages li { background: white; padding: 10px; margin-bottom: 8px; border-radius: 8px; }
+    #messages li b { color: #0088cc; }
+    #form { display: flex; gap: 8px; }
+    #input { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; }
+    button { padding: 10px 16px; background: #0088cc; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; }
+    #auth { max-width: 400px; margin: 50px auto; background: white; padding: 30px; border-radius: 12px; }
+    #auth h2 { margin-top: 0; text-align: center; }
+    #auth input { width: 100%; padding: 10px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; box-sizing: border-box; }
+    #auth button { width: 100%; padding: 12px; font-size: 16px; margin-bottom: 8px; }
+    #auth .link { text-align: center; color: #0088cc; cursor: pointer; font-size: 14px; }
+    .small-btn { font-size: 12px; padding: 6px 10px; margin-top: 6px; width: 100%; }
+    #chat-title { font-weight: bold; margin-bottom: 10px; }
+    #logout { float: right; background: #cc3333; font-size: 12px; padding: 6px 10px; }
+  </style>
+</head>
+<body>
+  <h2 style="text-align:center;">Мой мессенджер</h2>
+
+  <!-- Экран входа/регистрации -->
+  <div id="auth">
+    <h2 id="auth-title">Вход</h2>
+    <input id="auth-name" placeholder="Имя..." />
+    <input id="auth-pass" type="password" placeholder="Пароль..." />
+    <button onclick="submitAuth()" id="auth-btn">Войти</button>
+    <div class="link" onclick="toggleAuth()" id="auth-switch">Нет аккаунта? Зарегистрироваться</div>
+  </div>
+
+  <!-- Основной экран -->
+  <div id="layout" style="display:none;">
+    <div id="sidebar">
+      <h3>Онлайн <button id="logout" onclick="logout()">Выйти</button></h3>
+      <ul id="online-list" class="list"></ul>
+      <h3>Группы</h3>
+      <ul id="groups-list" class="list"></ul>
+      <button class="small-btn" onclick="createGroup()">+ Создать группу</button>
+    </div>
+    <div id="main">
+      <div id="chat-title">Выбери чат</div>
+      <ul id="messages"></ul>
+      <form id="form">
+        <input id="input" autocomplete="off" placeholder="Напиши сообщение..." />
+        <button>Отправить</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    let myName = null;
+    let currentChat = null;
+    let onlineUsersList = [];
+    let isLoginMode = true;
+
+    const form = document.getElementById('form');
+    const input = document.getElementById('input');
+    const messages = document.getElementById('messages');
+    const onlineList = document.getElementById('online-list');
+    const groupsList = document.getElementById('groups-list');
+    const chatTitle = document.getElementById('chat-title');
+    const layout = document.getElementById('layout');
+    const auth = document.getElementById('auth');
+
+    window.toggleAuth = function() {
+      isLoginMode = !isLoginMode;
+      document.getElementById('auth-title').textContent = isLoginMode ? 'Вход' : 'Регистрация';
+      document.getElementById('auth-btn').textContent = isLoginMode ? 'Войти' : 'Зарегистрироваться';
+      document.getElementById('auth-switch').textContent = isLoginMode
+        ? 'Нет аккаунта? Зарегистрироваться'
+        : 'Уже есть аккаунт? Войти';
+    };
+
+    window.submitAuth = async function() {
+      const name = document.getElementById('auth-name').value.trim();
+      const password = document.getElementById('auth-pass').value;
+      if (!name || !password) return alert('Заполни имя и пароль');
+
+      const url = isLoginMode ? '/login' : '/register';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, password })
+      });
+      const data = await res.json();
+      if (!res.ok) return alert(data.error || 'Ошибка');
+
+      if (!isLoginMode) {
+        alert('Аккаунт создан! Теперь войди.');
+        toggleAuth();
+        return;
+      }
+
+      // Успешный вход
+      myName = name;
+      socket.emit('register', myName);
+      auth.style.display = 'none';
+      layout.style.display = 'flex';
+      loadGroups();
+    };
+
+    window.logout = function() {
+      location.reload();
+    };
+
+    socket.on('online users', (users) => {
+      onlineUsersList = users;
+      renderOnline();
+    });
+
+    function renderOnline() {
+      onlineList.innerHTML = '';
+      onlineUsersList.forEach(user => {
+        if (user === myName) return;
+        const li = document.createElement('li');
+        li.textContent = user;
+        li.onclick = () => openUserChat(user);
+        if (currentChat && currentChat.type === 'user' && currentChat.name === user) li.classList.add('active');
+        onlineList.appendChild(li);
+      });
+    }
+
+    function openUserChat(name) {
+      currentChat = { type: 'user', name };
+      chatTitle.textContent = 'Чат с ' + name;
+      messages.innerHTML = '';
+      renderOnline(); renderGroups();
+      fetch(`/history?user1=${encodeURIComponent(myName)}&user2=${encodeURIComponent(name)}`)
+        .then(res => res.json())
+        .then(rows => rows.forEach(msg => addMessage(msg, false)));
+    }
+
+    function loadGroups() {
+      fetch(`/my-groups?name=${encodeURIComponent(myName)}`)
+        .then(res => res.json())
+        .then(rows => { window.myGroups = rows; renderGroups(); });
+    }
+
+    socket.on('groups updated', loadGroups);
+
+    function renderGroups() {
+      groupsList.innerHTML = '';
+      (window.myGroups || []).forEach(g => {
+        const li = document.createElement('li');
+        li.textContent = g.name;
+        li.onclick = () => openGroupChat(g);
+        if (currentChat && currentChat.type === 'group' && currentChat.id === g.id) li.classList.add('active');
+        groupsList.appendChild(li);
+      });
+    }
+
+    function openGroupChat(group) {
+      currentChat = { type: 'group', id: group.id, name: group.name };
+      chatTitle.textContent = 'Группа: ' + group.name;
+      messages.innerHTML = '';
+      renderOnline(); renderGroups();
+      fetch(`/group-history?groupId=${group.id}`)
+        .then(res => res.json())
+        .then(rows => rows.forEach(msg => addMessage({ from_name: msg.from_name, text: msg.text }, false)));
+    }
+
+    window.createGroup = async function() {
+      const name = prompt('Название группы:');
+      if (!name) return;
+      const users = await fetch('/users').then(r => r.json());
+      const others = users.filter(u => u !== myName);
+      const membersStr = prompt('Кого добавить (имена через запятую)\nДоступные: ' + others.join(', '));
+      if (!membersStr) return;
+      const members = membersStr.split(',').map(s => s.trim()).filter(Boolean).filter(u => users.includes(u));
+      members.push(myName);
+      socket.emit('create group', { name, members }, (group) => {
+        alert('Группа создана: ' + group.name);
+        loadGroups();
+      });
+    };
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!currentChat) return alert('Выбери чат');
+      if (!input.value) return;
+      if (currentChat.type === 'user') {
+        socket.emit('private message', { from: myName, to: currentChat.name, text: input.value });
+      } else {
+        socket.emit('group message', { groupId: currentChat.id, from: myName, text: input.value });
+      }
+      input.value = '';
+    });
+
+    socket.on('private message', (msg) => {
+      const isCurrent = currentChat && currentChat.type === 'user' &&
+        ((msg.from === myName && msg.to === currentChat.name) ||
+         (msg.to === myName && msg.from === currentChat.name));
+      if (isCurrent) addMessage(msg, true);
+    });
+
+    socket.on('group message', (msg) => {
+      const isCurrent = currentChat && currentChat.type === 'group' && currentChat.id === msg.groupId;
+      if (isCurrent) addMessage(msg, true);
+    });
+
+    function addMessage(msg, scroll) {
+      const li = document.createElement('li');
+      li.innerHTML = `<b>${msg.from_name || msg.from}:</b> ${msg.text}`;
+      messages.appendChild(li);
+      if (scroll) window.scrollTo(0, document.body.scrollHeight);
+    }
+  </script>
+</body>
+</html>
